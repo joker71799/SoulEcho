@@ -1,7 +1,7 @@
 [project]
 name = "soulecho"
 version = "0.1.0"
-description = "Add your description here"
+description = "个人日志疗愈Agent"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
