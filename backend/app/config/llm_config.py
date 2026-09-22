@@ -10,6 +10,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
+from config.logging_config import logger, mask_secret
+
 # 本文件位于 backend/app/config/，向上 3 级即项目根目录 SoulEcho/
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 ENV_PATH = PROJECT_ROOT / ".env"
@@ -56,4 +58,11 @@ chat_llm = ChatOpenAI(
     api_key=AGENT_LLM_API_KEY,
     base_url=AGENT_LLM_BASE_URL,
     temperature=_get_float("AGENT_LLM_TEMPERATURE", 0.8),
+)
+
+# 启动时记录一次生效配置摘要（密钥脱敏），方便确认环境变量是否按预期加载
+logger.info(
+    "Chat LLM 配置加载完成 model={} base_url={} temperature={} api_key={}",
+    chat_llm.model_name, AGENT_LLM_BASE_URL,
+    chat_llm.temperature, mask_secret(AGENT_LLM_API_KEY),
 )

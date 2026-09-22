@@ -1,6 +1,9 @@
+import time
+
 from agent.graph.state import AgentState
-from agent.prompt import QUERY_REWRITE_PROMPT, HEALING_SYSTEM_PROMPT,HEALING_PROMPT
+from agent.prompt import QUERY_REWRITE_PROMPT
 from config.llm_config import chat_llm
+from config.logging_config import logger
 
 # ==========================================
 # 长期记忆组件 (Mem0 - 自托管 HTTP 服务)
@@ -39,17 +42,37 @@ def retrieve_memory_node(state: AgentState):
         )
         rewritten_query = rewrite_llm.invoke(rewrite_prompt).content.strip()
         # 改写为空时兜底回退到原始倾诉，避免检索拿到空串
+        if not rewritten_query:
+            logger.warning(
+                "query 改写结果为空，回退原始倾诉 user_id={} current_query={!r}",
+                user_id, current_query,
+            )
         search_query = rewritten_query or current_query
+        # 记录改写前后对照，方便观察 query 改写质量、调优提示词
+        logger.info(
+            "query 改写完成 user_id={} original={!r} rewritten={!r}",
+            user_id, current_query, search_query,
+        )
     else:
         search_query = current_query
+        logger.info("首轮对话跳过 query 改写 user_id={} query={!r}", user_id, current_query)
 
-    # 从记忆库检索与当前话题相关的历史记忆
+    # 从记忆库检索与当前话题相关的历史记忆（计时，慢查询往往是链路第一瓶颈）
+    started = time.perf_counter()
     previous_memories = mem0_client.search(search_query, user_id=user_id)
+    search_ms = (time.perf_counter() - started) * 1000
 
     # 将检索到的散落记忆碎片，拼接成一段上下文文本
     memory_context = ""
     if previous_memories and "results" in previous_memories:
         memory_context = "\n".join([m["memory"] for m in previous_memories["results"]])
+        hit_count = len(previous_memories["results"])
+    else:
+        hit_count = 0
+    logger.info(
+        "记忆检索完成 user_id={} hit_count={} elapsed={:.0f}ms",
+        user_id, hit_count, search_ms,
+    )
 
     # 把检索结果单独写进 memory_context 字段，保持字段语义单一：
     # 这里只负责“找到记忆”，不负责“怎么措辞给模型看”

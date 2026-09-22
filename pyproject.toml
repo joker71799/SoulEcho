@@ -10,6 +10,7 @@ dependencies = [
     "langchain>=1.4.2",
     "langchain-openai>=1.6.2",
     "langgraph>=1.2.11",
+    "loguru>=0.7.3",
     "mem0ai>=2.1.0",
     "python-dotenv>=1.2.3",
     "uvicorn>=0.53.0",

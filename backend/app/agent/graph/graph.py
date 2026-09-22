@@ -1,3 +1,4 @@
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import StateGraph, START, END
 
 from agent.graph.healing_response_node import healing_response_node
@@ -22,4 +23,5 @@ workflow.add_edge("retrieve_memory", "generate_response")
 workflow.add_edge("generate_response", END)
 
 # 编译工作流，生成可直接调用的 agent 实例
-soulecho_agent = workflow.compile()
+checkpointer = InMemorySaver()
+soulecho_agent = workflow.compile(checkpointer=checkpointer)

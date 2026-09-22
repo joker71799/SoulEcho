@@ -19,6 +19,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from memory.mem0_selfhosted_client import Mem0ServerClient
+from config.logging_config import logger, mask_secret
 
 # ------------------------------------------------------------
 # 1. 定位并加载 .env
@@ -52,4 +53,10 @@ MEM0_SERVER_API_KEY = _require("MEM0_SERVER_API_KEY")
 mem0_client = Mem0ServerClient(
     base_url=MEM0_SERVER_BASE_URL,
     api_key=MEM0_SERVER_API_KEY,
+)
+
+# 启动时记录一次生效配置摘要（密钥脱敏），方便确认 Mem0 服务指向是否正确
+logger.info(
+    "Mem0 自托管服务配置加载完成 base_url={} api_key={}",
+    MEM0_SERVER_BASE_URL, mask_secret(MEM0_SERVER_API_KEY),
 )

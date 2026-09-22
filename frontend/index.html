@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SoulEcho · 心灵回声</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo">🌿</span>
+          <div class="brand-text">
+            <h1>SoulEcho</h1>
+            <p class="subtitle">你的私人疗愈日志伙伴</p>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <span id="health" class="health" title="后端服务状态">● 检测中</span>
+          <button id="new-chat" class="ghost-btn" title="开启新会话">新会话</button>
+        </div>
+      </header>
+
+      <main id="messages" class="messages">
+        <div class="msg agent">
+          <div class="avatar">🌿</div>
+          <div class="bubble">
+            你好，我是 SoulEcho。把今天想说的话写下来吧，我会认真倾听并回应你。
+          </div>
+        </div>
+      </main>
+
+      <footer class="composer">
+        <textarea
+          id="input"
+          class="input"
+          rows="2"
+          placeholder="写下你的心情或日志…（Enter 发送，Shift + Enter 换行）"
+        ></textarea>
+        <button id="send" class="send-btn">发送</button>
+      </footer>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

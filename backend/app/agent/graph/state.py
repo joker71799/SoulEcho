@@ -10,7 +10,7 @@ class AgentState(TypedDict):
     user_id: str
 
     # 从 Mem0 检索出的历史记忆上下文（纯数据，不含任何提示语/装饰文本）
-    # 由 retrieve_memory_node 写入，供 generate_response 节点拼装 Prompt 使用
+    # 由 retrieve_memory_node 写入，供 healing_response_node 拼进系统提示词的【历史记忆】段落
     memory_context: str
 
     # 最终返回给前端的疗愈回复文本，只由 generate_response 节点写入
