@@ -40,6 +40,7 @@ class JournalResponse(BaseModel):
     status: str                          # "done" | "direction_required"
     reply: Optional[str] = None          # status=done 时有值
     steer: Optional[dict] = None         # status=direction_required 时为 interrupt 递送的引导载荷
+    crisis: Optional[dict] = None        # 危机热线卡片（命中危机时随 reply 一起返回）
 
 
 # ==========================================
@@ -66,13 +67,25 @@ def _to_response(result: dict, user_id: str, conversation_id: str) -> JournalRes
         f"{m.type}:{preview(str(m.content)) if m.type == 'ai' else str(m.content)}"
         for m in result.get("messages", [])
     ]
+    # crisis_card 是含长文案的结构化 dict，日志只留可审计摘要：等级 + 心理热线数 + 紧急电话数
+    card = result.get("crisis_card")
+    card_summary = (
+        f"level={card.get('level', '')} "
+        f"hotlines={len(card.get('hotlines', []))} "
+        f"emergency={len(card.get('emergency', []))}"
+        if card
+        else "-"
+    )
     logger.info(
-        "State 快照 user_id={} conversation_id={} support_mode={} msg_count={} memory_preview={!r} messages=[{}]",
-        user_id, conversation_id, result.get("support_mode", ""),
+        "State 快照 user_id={} conversation_id={} is_crisis={} crisis_level={} "
+        "crisis_card=[{}] support_mode={} msg_count={} memory_preview={!r} messages=[{}]",
+        user_id, conversation_id, result.get("is_crisis", ""),
+        result.get("crisis_level", ""), card_summary,
+        result.get("support_mode", ""),
         len(result.get("messages", [])), preview(result.get("memory_context", "")),
         " | ".join(snapshot_msgs),
     )
-    return JournalResponse(status="done", reply=result["reply"])
+    return JournalResponse(status="done", reply=result["reply"], crisis=result.get("crisis_card"))
 
 
 @app.post("/api/v1/chat", response_model=JournalResponse)

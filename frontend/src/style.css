@@ -246,3 +246,50 @@ body {
 .steer-chip:active {
   transform: scale(0.97);
 }
+
+/* 危机干预：热线求助卡片（醒目、可直拨） */
+.msg.crisis {
+  align-self: flex-start;
+  max-width: 90%;
+}
+
+.crisis-card {
+  border: 1.5px solid var(--accent);
+  background: #fff7f0;
+  border-radius: 14px;
+  border-top-left-radius: 4px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.crisis-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.crisis-msg {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.crisis-line {
+  display: block;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.crisis-line:hover {
+  background: var(--agent-bubble);
+  border-color: var(--accent);
+}

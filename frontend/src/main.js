@@ -84,7 +84,7 @@ let sending = false;
 // 方向引导待点选时，暂停普通输入发送，避免在“已中断的 thread”上重复 invoke 造成异常
 let awaitingDirection = false;
 
-// 统一处理后端返回：done 渲染回复；direction_required 渲染一键选项
+// 统一处理后端返回：done 渲染回复（危机时附带热线卡）；direction_required 渲染一键选项
 function renderResult(data, pending) {
   clearSteer();
   if (data.status === 'direction_required') {
@@ -96,7 +96,47 @@ function renderResult(data, pending) {
     pending.className = 'bubble';
     pending.textContent = data.reply ?? '(空回复)';
     awaitingDirection = false;
+    // 危机命中：后端随 reply 一起返回 crisis 卡片，额外渲染一张醒目的求助卡
+    if (data.crisis) renderCrisisCard(data.crisis);
   }
+}
+
+// 危机热线卡片：区别于普通气泡，醒目呈现可直拨的求助电话
+function renderCrisisCard(crisis) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg agent crisis';
+
+  const card = document.createElement('div');
+  card.className = 'crisis-card';
+
+  const title = document.createElement('div');
+  title.className = 'crisis-title';
+  title.textContent = crisis.title || '你并不孤单，请让这些专业的人帮帮你';
+  card.appendChild(title);
+
+  if (crisis.message) {
+    const msg = document.createElement('div');
+    msg.className = 'crisis-msg';
+    msg.textContent = crisis.message;
+    card.appendChild(msg);
+  }
+
+  // 紧急电话（imminent 时引导优先拨打）与常规热线统一渲染为可点击 tel: 链接
+  [...(crisis.emergency || []), ...(crisis.hotlines || [])].forEach((h) => {
+    card.appendChild(crisisLine(h));
+  });
+
+  wrap.appendChild(card);
+  messagesEl.appendChild(wrap);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function crisisLine(h) {
+  const row = document.createElement('a');
+  row.className = 'crisis-line';
+  row.href = `tel:${String(h.number || '').replace(/[^0-9+]/g, '')}`;
+  row.textContent = `${h.name}：${h.number}${h.desc ? '（' + h.desc + '）' : ''}`;
+  return row;
 }
 
 // chat 与 resume 共用：发起请求 -> 渲染结果 -> 复位发送态

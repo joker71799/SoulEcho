@@ -9,6 +9,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "langchain>=1.4.2",
     "langchain-openai>=1.6.2",
+    "langchain-typesafe>=0.0.1a3",
     "langgraph>=1.2.11",
     "loguru>=0.7.3",
     "mem0ai>=2.1.0",
