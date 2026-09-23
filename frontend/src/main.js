@@ -1,7 +1,9 @@
 // SoulEcho 轻量化前端对接逻辑
 // 后端接口（经 Vite 代理转发到 127.0.0.1:9000）：
-//   POST /api/v1/chat  body: {user_id, conversation_id, content} -> {reply}
-//   GET  /health       -> {status, project}
+//   POST /api/v1/chat    body: {user_id, conversation_id, content} -> {status, reply?, steer?}
+//   POST /api/v1/resume  body: {user_id, conversation_id, support_mode} -> {status, reply?, steer?}
+//   GET  /health         -> {status, project}
+// status："done" 直接渲染回复；"direction_required" 渲染方向引导一键选项（场景B HITL）。
 
 // ---------- ID 管理 ----------
 // user_id：长期记忆隔离，跨会话稳定，存 localStorage
@@ -77,29 +79,33 @@ async function checkHealth() {
   }
 }
 
-// ---------- 发送 ----------
+// ---------- 发送 / 恢复 ----------
 let sending = false;
+// 方向引导待点选时，暂停普通输入发送，避免在“已中断的 thread”上重复 invoke 造成异常
+let awaitingDirection = false;
 
-async function sendMessage() {
-  const content = inputEl.value.trim();
-  if (!content || sending) return;
+// 统一处理后端返回：done 渲染回复；direction_required 渲染一键选项
+function renderResult(data, pending) {
+  clearSteer();
+  if (data.status === 'direction_required') {
+    pending.className = 'bubble';
+    pending.textContent = data.steer?.question || '先看看这一刻你更需要我怎么陪你？';
+    awaitingDirection = true;
+    renderSteerOptions(data.steer?.options || []);
+  } else {
+    pending.className = 'bubble';
+    pending.textContent = data.reply ?? '(空回复)';
+    awaitingDirection = false;
+  }
+}
 
-  sending = true;
-  sendBtn.disabled = true;
-  inputEl.value = '';
-
-  addMessage('user', content);
-  const pending = addMessage('agent', '正在思考…', 'typing');
-
+// chat 与 resume 共用：发起请求 -> 渲染结果 -> 复位发送态
+async function runRequest(url, body, pending) {
   try {
-    const res = await fetch('/api/v1/chat', {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        user_id: USER_ID,
-        conversation_id: conversationId,
-        content,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!res.ok) {
@@ -108,11 +114,11 @@ async function sendMessage() {
     }
 
     const data = await res.json();
-    pending.className = 'bubble';
-    pending.textContent = data.reply ?? '(空回复)';
+    renderResult(data, pending);
   } catch (err) {
     pending.className = 'bubble error';
     pending.textContent = `请求失败：${err.message}。请确认后端已启动（127.0.0.1:9000）。`;
+    awaitingDirection = false;
     checkHealth();
   } finally {
     sending = false;
@@ -122,8 +128,72 @@ async function sendMessage() {
   }
 }
 
+async function sendMessage() {
+  const content = inputEl.value.trim();
+  if (!content || sending || awaitingDirection) return;
+
+  sending = true;
+  sendBtn.disabled = true;
+  inputEl.value = '';
+
+  addMessage('user', content);
+  const pending = addMessage('agent', '正在思考…', 'typing');
+
+  await runRequest(
+    '/api/v1/chat',
+    { user_id: USER_ID, conversation_id: conversationId, content },
+    pending
+  );
+}
+
+// 用户点选陪伴方向：移除选项、以轻量方式回显，再调 /api/v1/resume 恢复生成
+async function submitDirection(value, label, chipWrap) {
+  if (sending) return;
+  sending = true;
+  sendBtn.disabled = true;
+  awaitingDirection = false;
+  if (chipWrap) chipWrap.remove();
+  if (label) addMessage('user', label);
+  const pending = addMessage('agent', '正在思考…', 'typing');
+
+  await runRequest(
+    '/api/v1/resume',
+    { user_id: USER_ID, conversation_id: conversationId, support_mode: value },
+    pending
+  );
+}
+
+// ---------- 方向引导选项渲染 ----------
+let steerEl = null;
+function clearSteer() {
+  if (steerEl) {
+    steerEl.remove();
+    steerEl = null;
+  }
+}
+function renderSteerOptions(options) {
+  clearSteer();
+  steerEl = document.createElement('div');
+  steerEl.className = 'msg agent steer';
+  const box = document.createElement('div');
+  box.className = 'steer-options';
+  options.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.className = 'steer-chip';
+    btn.textContent = opt.label;
+    if (opt.hint) btn.title = opt.hint;
+    btn.addEventListener('click', () => submitDirection(opt.value, opt.label, steerEl));
+    box.appendChild(btn);
+  });
+  steerEl.appendChild(box);
+  messagesEl.appendChild(steerEl);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
 // ---------- 新会话 ----------
 function startNewConversation() {
+  clearSteer();
+  awaitingDirection = false;
   conversationId = genId('conv');
   sessionStorage.setItem('soulecho_conversation_id', conversationId);
   messagesEl.innerHTML = '';

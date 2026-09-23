@@ -1,7 +1,9 @@
 import time
+from typing import Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from langgraph.types import Command
 from pydantic import BaseModel
 # 统一日志（导入即完成 loguru 初始化，必须放在业务模块之前）
 from config.logging_config import logger, preview
@@ -26,20 +28,58 @@ class JournalInput(BaseModel):
     content: str  # 用户倾诉的日志内容
 
 
+class DirectionInput(BaseModel):
+    """用户在方向引导门点选后回传的决策"""
+    user_id: str
+    conversation_id: str
+    support_mode: str     # listen / clarify / advise
+
+
 class JournalResponse(BaseModel):
-    """返回给前端的响应体数据模型"""
-    reply: str  # Agent 经过疗愈思考后给出的回复内容
+    """统一响应：done 直接给回复；direction_required 给待点选的引导选项"""
+    status: str                          # "done" | "direction_required"
+    reply: Optional[str] = None          # status=done 时有值
+    steer: Optional[dict] = None         # status=direction_required 时为 interrupt 递送的引导载荷
 
 
 # ==========================================
 # 定义 HTTP 路由定义
 # ==========================================
 
+def _thread_config(conversation_id: str):
+    return {"configurable": {"thread_id": conversation_id}}
+
+
+def _to_response(result: dict, user_id: str, conversation_id: str) -> JournalResponse:
+    # 图在 steer_direction 处 interrupt -> 返回体带 __interrupt__，转成“待点选方向”响应
+    if "__interrupt__" in result and result["__interrupt__"]:
+        steer_payload = result["__interrupt__"][0].value
+        logger.info(
+            "图已暂停等待方向引导 user_id={} conversation_id={} question={!r}",
+            user_id, conversation_id, preview(steer_payload.get("question", "")),
+        )
+        return JournalResponse(status="direction_required", steer=steer_payload)
+
+    # 正常跑完（或用户点选恢复后）：记录 State 快照，返回最终疗愈回复
+    # 截断原则：AI/记忆等长正文做预览，用户消息（query）保留全文
+    snapshot_msgs = [
+        f"{m.type}:{preview(str(m.content)) if m.type == 'ai' else str(m.content)}"
+        for m in result.get("messages", [])
+    ]
+    logger.info(
+        "State 快照 user_id={} conversation_id={} support_mode={} msg_count={} memory_preview={!r} messages=[{}]",
+        user_id, conversation_id, result.get("support_mode", ""),
+        len(result.get("messages", [])), preview(result.get("memory_context", "")),
+        " | ".join(snapshot_msgs),
+    )
+    return JournalResponse(status="done", reply=result["reply"])
+
+
 @app.post("/api/v1/chat", response_model=JournalResponse)
 async def chat_with_agent(payload: JournalInput):
     """
-    核心对话/日志分析接口。
-    前端通过 POST 请求把用户 ID、会话Id、日记内容发过来，经过 Agent 状态图处理后返回疗愈话语。
+    核心对话接口。若会话尚未确定陪伴方向，图会在生成前暂停并返回 direction_required，
+    等待前端调用 /api/v1/resume 提交点选后恢复生成。
     """
     try:
         # 用户 query 按原则记全文不做截断
@@ -54,32 +94,17 @@ async def chat_with_agent(payload: JournalInput):
             "user_id": payload.user_id  # 用户 ID
         }
 
-        # 2. 触发并运行 LangGraph 状态图工作流
-        # invoke 会顺着 START -> 检索记忆 -> 生成回复 -> END 自动跑完一轮
-        # 整体计时：这是发现"慢在哪一环"的最直接手段
-        config = {"configurable": {"thread_id": payload.conversation_id}}
+        # 2. 触发并运行 LangGraph 状态图工作流（可能在中途因 interrupt 暂停）
         started = time.perf_counter()
-        result = soulecho_agent.invoke(inputs, config)
+        result = soulecho_agent.invoke(inputs, _thread_config(payload.conversation_id))
         elapsed_ms = (time.perf_counter() - started) * 1000
 
-        # 3. 记录 graph.invoke 返回的最终 State 快照：本轮的“事实全集”，便于排查记忆召回与多轮消息累积
-        # 截断原则：AI/记忆等长正文（memory_context、AI 消息）做预览，用户消息（query）保留全文
-        snapshot_msgs = [
-            f"{m.type}:{preview(str(m.content)) if m.type == 'ai' else str(m.content)}"
-            for m in result.get("messages", [])
-        ]
+        # 3. 根据图是否处于中断态，返回“待点选方向”或“最终回复”
         logger.info(
-            "State 快照 user_id={} conversation_id={} msg_count={} memory_preview={!r} messages=[{}]",
-            payload.user_id, payload.conversation_id, len(result.get("messages", [])),
-            preview(result.get("memory_context", "")), " | ".join(snapshot_msgs),
+            "对话请求处理完成 user_id={} conversation_id={} elapsed={:.0f}ms",
+            payload.user_id, payload.conversation_id, elapsed_ms,
         )
-
-        # 4. 请求完成,记录日志
-        logger.info(
-            "对话请求完成 user_id={} conversation_id={} elapsed={:.0f}ms",
-            payload.user_id, payload.conversation_id, elapsed_ms
-        )
-        return JournalResponse(reply=result["reply"])
+        return _to_response(result, payload.user_id, payload.conversation_id)
 
     except Exception as e:
         # 记录完整堆栈后再向前端抛 500：detail 只给前端看，堆栈只留在日志里
@@ -88,6 +113,33 @@ async def chat_with_agent(payload: JournalInput):
             payload.user_id, payload.conversation_id,
         )
         raise HTTPException(status_code=500, detail=f"Agent 运行异常: {str(e)}")
+
+
+@app.post("/api/v1/resume", response_model=JournalResponse)
+async def resume_with_direction(payload: DirectionInput):
+    """用户在引导门点选方向后，用同一 thread_id 恢复图执行并生成疗愈回复。"""
+    try:
+        logger.info(
+            "收到方向点选 user_id={} conversation_id={} support_mode={}",
+            payload.user_id, payload.conversation_id, payload.support_mode,
+        )
+        started = time.perf_counter()
+        # Command(resume=...) 的值会作为 steer_direction_node 里 interrupt() 的返回值注入回来
+        result = soulecho_agent.invoke(
+            Command(resume=payload.support_mode),
+            _thread_config(payload.conversation_id),
+        )
+        logger.info(
+            "恢复执行完成 user_id={} conversation_id={} elapsed={:.0f}ms",
+            payload.user_id, payload.conversation_id, (time.perf_counter() - started) * 1000,
+        )
+        return _to_response(result, payload.user_id, payload.conversation_id)
+    except Exception as e:
+        logger.exception(
+            "恢复执行异常 user_id={} conversation_id={}",
+            payload.user_id, payload.conversation_id,
+        )
+        raise HTTPException(status_code=500, detail=f"恢复执行异常: {str(e)}")
 
 
 @app.get("/health")

@@ -4,6 +4,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 
 from agent.graph.state import AgentState
 from agent.prompt import HEALING_SYSTEM_PROMPT
+from agent.graph.steer_direction_node import DIRECTION_GUIDE
 from config.llm_config import chat_llm
 from config.logging_config import logger, preview
 
@@ -35,13 +36,20 @@ def healing_response_node(state: AgentState):
         MEMORY_SECTION.format(memory_display=memory_context) if memory_context else ""
     )
 
+    # 场景B：把用户在引导门点选的方向拼成“本次陪伴方向”追加段落（未选则不加）
+    support_mode = state.get("support_mode", "")
+    direction_guide = DIRECTION_GUIDE.get(support_mode, "") if support_mode else ""
+    system_content = HEALING_SYSTEM_PROMPT.format(memory_section=memory_section)
+    if direction_guide:
+        system_content += f"\n\n【本次陪伴方向】\n{direction_guide}"
+
     # 多轮 messages 调用：单条 System（角色设定 + 跨会话记忆合并）在前，
     # 本会话近期历史以 HumanMessage / AIMessage 原样传入，最后是当前倾诉，
     # 让模型以原生多轮方式理解会话，而不是把一切压成一段字符串。
     # 只取最近 RECENT_REPLY_TURNS 轮，防止长会话把上下文窗口撑爆。
     history = state["messages"][-(RECENT_REPLY_TURNS * 2):-1]
     llm_messages = [
-        SystemMessage(content=HEALING_SYSTEM_PROMPT.format(memory_section=memory_section))
+        SystemMessage(content=system_content)
     ]
     llm_messages.extend(history)
     llm_messages.append(state["messages"][-1])

@@ -213,3 +213,36 @@ body {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* 场景B：方向引导一键选项 */
+.msg.steer {
+  align-self: flex-start;
+  max-width: 90%;
+}
+
+.steer-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.steer-chip {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
+}
+
+.steer-chip:hover {
+  background: var(--agent-bubble);
+  border-color: var(--accent);
+}
+
+.steer-chip:active {
+  transform: scale(0.97);
+}

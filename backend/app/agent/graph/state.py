@@ -15,3 +15,9 @@ class AgentState(TypedDict):
 
     # 最终返回给前端的疗愈回复文本，只由 generate_response 节点写入
     reply: str
+
+    # ===== Human-in-the-Loop（场景B：方向引导）=====
+    # 用户点选的陪伴方向："listen" / "clarify" / "advise"，
+    # 由 steer_direction_node 经 interrupt 暂停、Command(resume=) 恢复后写入，
+    # 供 generate_response 定调。会话级持久（靠 checkpointer），选定后本会话沿用。
+    support_mode: str
