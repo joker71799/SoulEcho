@@ -78,11 +78,11 @@ def _to_response(result: dict, user_id: str, conversation_id: str) -> JournalRes
     )
     logger.info(
         "State 快照 user_id={} conversation_id={} is_crisis={} crisis_level={} "
-        "crisis_card=[{}] support_mode={} msg_count={} memory_preview={!r} messages=[{}]",
+        "crisis_card=[{}] support_mode={} msg_count={} messages=[{}]",
         user_id, conversation_id, result.get("is_crisis", ""),
         result.get("crisis_level", ""), card_summary,
         result.get("support_mode", ""),
-        len(result.get("messages", [])), preview(result.get("memory_context", "")),
+        len(result.get("messages", [])),
         " | ".join(snapshot_msgs),
     )
     return JournalResponse(status="done", reply=result["reply"], crisis=result.get("crisis_card"))

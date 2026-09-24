@@ -102,6 +102,34 @@ body {
   background: var(--bg);
 }
 
+/* 顶栏：用户 ID 切换（测试用） */
+.user-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.user-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.user-id-input {
+  width: 150px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--panel);
+  outline: none;
+}
+
+.user-id-input:focus {
+  border-color: var(--accent);
+}
+
 /* 消息区 */
 .messages {
   flex: 1;

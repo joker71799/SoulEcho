@@ -22,6 +22,13 @@ function getUserId() {
   return id;
 }
 
+// 切换用户身份：写入 localStorage 并同步输入框显示
+function setUserId(id) {
+  userId = id;
+  localStorage.setItem('soulecho_user_id', id);
+  if (userIdInputEl) userIdInputEl.value = id;
+}
+
 function getConversationId() {
   let id = sessionStorage.getItem('soulecho_conversation_id');
   if (!id) {
@@ -31,7 +38,7 @@ function getConversationId() {
   return id;
 }
 
-const USER_ID = getUserId();
+let userId = getUserId();
 let conversationId = getConversationId();
 
 // ---------- DOM ----------
@@ -40,6 +47,9 @@ const inputEl = document.getElementById('input');
 const sendBtn = document.getElementById('send');
 const newChatBtn = document.getElementById('new-chat');
 const healthEl = document.getElementById('health');
+const userIdInputEl = document.getElementById('user-id-input');
+const switchUserBtn = document.getElementById('switch-user');
+const randomUserBtn = document.getElementById('random-user');
 
 // ---------- 渲染 ----------
 function addMessage(role, text, extraClass = '') {
@@ -181,7 +191,7 @@ async function sendMessage() {
 
   await runRequest(
     '/api/v1/chat',
-    { user_id: USER_ID, conversation_id: conversationId, content },
+    { user_id: userId, conversation_id: conversationId, content },
     pending
   );
 }
@@ -198,7 +208,7 @@ async function submitDirection(value, label, chipWrap) {
 
   await runRequest(
     '/api/v1/resume',
-    { user_id: USER_ID, conversation_id: conversationId, support_mode: value },
+    { user_id: userId, conversation_id: conversationId, support_mode: value },
     pending
   );
 }
@@ -243,9 +253,30 @@ function startNewConversation() {
   );
 }
 
+// ---------- 切换用户身份（测试用） ----------
+// 切换后重置会话，避免不同身份的长期记忆 / 多轮上下文混用
+function switchUserId(newId) {
+  const id = String(newId || '').trim();
+  if (!id || id === userId) {
+    userIdInputEl.value = userId;
+    return;
+  }
+  setUserId(id);
+  startNewConversation();
+  addMessage('agent', `已切换到用户：${id}`);
+}
+
 // ---------- 事件绑定 ----------
 sendBtn.addEventListener('click', sendMessage);
 newChatBtn.addEventListener('click', startNewConversation);
+switchUserBtn.addEventListener('click', () => switchUserId(userIdInputEl.value));
+randomUserBtn.addEventListener('click', () => switchUserId(genId('user')));
+userIdInputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    switchUserId(userIdInputEl.value);
+  }
+});
 inputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -254,5 +285,6 @@ inputEl.addEventListener('keydown', (e) => {
 });
 
 // ---------- 初始化 ----------
+userIdInputEl.value = userId;
 checkHealth();
 inputEl.focus();

@@ -1,6 +1,6 @@
 """危机安全话术模板：受控、可审计，刻意不让疗愈大模型即兴生成。
 
-key 与 crisis_level 对应；healing_response_node 的危机分支按等级取模板。
+key 与 crisis_level 对应；finalize_reply_node 的危机话术分支按等级取模板。
 未命中的等级统一回落 "risk"，保证任何危机态都有稳定回复。
 """
 

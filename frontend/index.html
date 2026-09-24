@@ -17,6 +17,12 @@
           </div>
         </div>
         <div class="topbar-right">
+          <div class="user-box" title="当前用户ID，可修改以切换测试身份">
+            <span class="user-label">用户</span>
+            <input id="user-id-input" class="user-id-input" spellcheck="false" autocomplete="off" />
+            <button id="switch-user" class="ghost-btn" title="应用输入的用户ID">切换</button>
+            <button id="random-user" class="ghost-btn" title="生成随机用户ID">随机</button>
+          </div>
           <span id="health" class="health" title="后端服务状态">● 检测中</span>
           <button id="new-chat" class="ghost-btn" title="开启新会话">新会话</button>
         </div>
