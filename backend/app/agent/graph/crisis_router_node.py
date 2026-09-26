@@ -1,3 +1,4 @@
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_typesafe import Choice
 
 from agent.crisis.keyword_scan import scan_crisis
@@ -16,8 +17,17 @@ from config.typesafe_config import jev_classifier
 #
 # Step 1 升级（纯增量）：同一次 Jev invoke 里同时拿回「危机等级 + 是否闲聊」双判。
 # 本轮只多写一个 is_chitchat 状态位并记日志，路由行为保持原样（闲聊仍走旧链路）。
+#
+# 送判文本升级：危机信号可能藏在指代里（「我明天就要去找她了」/「那瓶东西吃完了」），
+# 裸句必漏判。故不单独送本轮 query，而是拼接最近 2 轮原话作为上下文（零 LLM 改写、
+# 不丢用户本意），并在 instructions 里声明结构：历史仅用于补全指代，判定落点仍是当前 query。
 CRISIS_LEVEL_QUESTION = Choice(
-    instructions="用户当前这句话属于哪种自伤/自杀危机等级？",
+    instructions=(
+        "输入包含「历史聊天记录」与「当前用户query」两部分。"
+        "请判断用户当前这句话属于哪种自伤/自杀危机等级："
+        "历史仅用于补全当前句中的指代与省略（如「她」「那瓶东西」指向谁/什么），"
+        "判定落点始终是当前用户query 本身。"
+    ),
     criteria={
         "none": (
             "没有自伤或自杀念头。普通的情绪低落、疲惫、压力大、失眠、"
@@ -35,7 +45,11 @@ CRISIS_LEVEL_QUESTION = Choice(
 # 闲聊判定：与危机等级在同一次 Jev invoke 中一起拿回，共享同一次调用的延迟。
 # 本轮仅用于写状态 + 日志，尚不参与路由（真正分岔在 Step 3 接入）。
 CHITCHAT_QUESTION = Choice(
-    instructions="用户当前这句话是否只是闲聊/寒暄（不涉及需要陪伴引导的情绪倾诉）？",
+    instructions=(
+        "输入包含「历史聊天记录」与「当前用户query」两部分。"
+        "请判断用户当前这句话是否只是闲聊/寒暄（不涉及需要陪伴引导的情绪倾诉）："
+        "历史仅用于补全指代与省略，判定落点始终是当前用户query 本身。"
+    ),
     criteria={
         "yes": "纯粹的打招呼、寒暄、日常闲聊，与心理困扰、情绪倾诉无关。",
         "no": "包含情绪倾诉、压力困扰、需要被陪伴或引导的内容；或任何危机信号。",
@@ -63,10 +77,12 @@ def crisis_router_node(state: AgentState):
     """
     user_id = state.get("user_id", "default_user")
     conversation_id = state.get("conversation_id", "")
-    text = state["messages"][-1].content
+    text = str(state["messages"][-1].content)
+    # 送判文本 = 最近 2 轮历史 + 当前 query 的结构化拼接，仅用于 Jev 双判（关键词兜底仍只扫原文）
+    judged_text = _build_jev_text(state["messages"], text)
 
     try:
-        level, is_chitchat = _jev_judge(text, user_id, conversation_id)
+        level, is_chitchat = _jev_judge(judged_text, user_id, conversation_id)
         source = "jev"
     except Exception:
         # Jev 不可用才轮到关键词兜底；关键词层只判危机、无闲聊判定能力，闲聊位保守置 False 走旧链路
@@ -139,9 +155,43 @@ def crisis_router_node(state: AgentState):
     return update
 
 
+# Jev 送判历史窗口：当前 query 之前最近 N 个用户轮（含其间的助手正文回复）
+_JEV_HISTORY_TURNS = 2
+
+
+def _build_jev_text(messages: list, current: str) -> str:
+    """拼接 Jev 送判文本：最近 _JEV_HISTORY_TURNS 轮历史原话 + 当前 query，带段落声明供模型区分。
+
+    crisis_router 是每轮首节点，messages[-1] 即当前 query，历史只在其余消息里取：
+    从「倒数第 N 条历史用户消息」起切到当前 query 前；历史不足 N 轮时有多少带多少。
+    只保留 human/ai 的正文消息，剔除工具轮（ToolMessage 与带 tool_calls 的 AI 消息，
+    含 checkpointer 跨轮残留的 CF 检索中间过程）——那些不是会话原话，混进送判只会干扰判定。
+    只做原话拼接、不做任何改写：危机语气词一字不动，指代由模型借历史自行补全。
+    纯字符串拼接，零额外 LLM 调用、零延迟。
+    """
+    past_human = [i for i, m in enumerate(messages[:-1]) if isinstance(m, HumanMessage)]
+    history = (
+        messages[past_human[max(0, len(past_human) - _JEV_HISTORY_TURNS)] : -1]
+        if past_human else []
+    )
+    lines = [
+        f"[{'user' if isinstance(m, HumanMessage) else 'assistant'}] {m.content}"
+        for m in history
+        if isinstance(m, (HumanMessage, AIMessage))
+        and not getattr(m, "tool_calls", None)
+    ]
+    block = (
+        "【历史聊天记录】（仅作上下文参考，用于补全当前句的指代与省略，不要对其判定）\n"
+        + "\n".join(lines) + "\n\n"
+        if lines else ""
+    )
+    return block + "【当前用户query】（判定对象）\n" + current
+
+
 def _jev_judge(text: str, user_id: str, conversation_id: str):
     """向 Jev 同一次 invoke 拿回「危机等级 + 是否闲聊」双判。
 
+    text 为 _build_jev_text 的拼接文本（历史 + 当前 query）。
     返回 (level, is_chitchat)：level 为 "none" / "risk" / "imminent"，is_chitchat 为 bool。
     本函数不捕异常：调用失败直接向上抛，由 crisis_router_node 决定兜底策略。
     """
@@ -160,8 +210,8 @@ def _jev_judge(text: str, user_id: str, conversation_id: str):
     level = crisis_answer.choice if crisis_answer.choice in _LEVEL_RANK else "none"
     confidence = crisis_answer.confidence
     logger.info(
-        "Jev 危机判定完成 user_id={} conversation_id={} level={} confidence={} query={!r}",
-        user_id, conversation_id, level, confidence, text,
+        "Jev 危机判定完成 user_id={} conversation_id={} level={} confidence={} judged_text={!r}",
+        user_id, conversation_id, level, confidence, preview(text),
     )
     # 置信度不足则降级最警戒话术（等级仍保留，不会因此判成无危机）
     if level == "imminent" and confidence < _IMMINENT_MIN_CONFIDENCE:
