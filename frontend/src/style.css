@@ -275,6 +275,28 @@ body {
   transform: scale(0.97);
 }
 
+/* CF 推断命中的推荐项：高亮 + 徽标，让“AI 猜的方向”一眼可辨、可一键采纳 */
+.steer-chip.recommended {
+  border-color: var(--accent);
+  background: #fff3e9;
+  font-weight: 600;
+}
+
+.steer-chip.recommended:hover {
+  background: #ffe9d8;
+}
+
+.steer-tag {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 1px 7px;
+  vertical-align: middle;
+}
+
 /* 危机干预：热线求助卡片（醒目、可直拨） */
 .msg.crisis {
   align-self: flex-start;

@@ -14,37 +14,55 @@ DIRECTION_OPTIONS = [
     {"value": "advise", "label": "\U0001f4a1 想要些建议", "hint": "在被理解之后，给你一点可操作的方向"},
 ]
 
-# 询问语（暂停时展示给用户）
+# 询问语（Step 8 前：CF 未能给出推断方向时的中性兜底问法）
 STEER_QUESTION = "先看看这一刻你更需要我怎么陪你？选一个就好，也可以随时告诉我。"
 
-# 各方向对模型语气/策略的约束，生成回复时按用户选择注入系统提示词。
-# key 与 DIRECTION_OPTIONS 的 value 一一对应（单一数据源），由 healing_response_node 引用。
-DIRECTION_GUIDE = {
-    "listen": "用户此刻希望【被倾听】：以接纳、共情、陪伴为主，多反映和确认情绪，"
-              "不急于分析或给建议，让对方真切感到被听见、被接住。",
-    "clarify": "用户此刻希望【一起理清】：在共情基础上，用温和的复述与提问，"
-               "帮助用户把想法和情绪梳理出一点结构，不替对方下结论。",
-    "advise": "用户此刻希望【获得建议】：先充分共情接纳，再给出少量、可操作、贴合处境的小建议，"
-              "避免说教和长篇大论。",
-}
-
 _VALID_MODES = {o["value"] for o in DIRECTION_OPTIONS}
+_LABEL_BY_VALUE = {o["value"]: o["label"] for o in DIRECTION_OPTIONS}
+
+
+def _build_steer_payload(state: AgentState) -> dict:
+    """组装引导门 interrupt 载荷（Step 8：递送 CF 推断方向 + 理由 + 三个可覆盖选项）。
+
+    - CF 高置信时根本不会进到这里；能进来即 CF 把握不足，故把它的推断摊开给用户确认/覆盖；
+    - question 文本自带推断方向与理由（对未升级的前端也天然可读）；
+    - options 每项附 recommended 标记（命中的即 CF 的推断），并回传 inferred_mode/inferred_reason
+      结构化字段，供前端做“推荐高亮/一键采纳”等增强（Step 10 联调）。
+    CF 解析失败时 support_mode 为空（已被 crisis_router 每轮清空），退化为中性问法、不带推荐理由。
+    """
+    inferred = state.get("support_mode") or ""
+    # 非法/残留方向一律视为“无推断”，保证问法、recommended、inferred_mode 三者口径一致
+    if inferred not in _VALID_MODES:
+        inferred = ""
+    reason = (state.get("support_mode_reason") or "").strip()
+    options = [{**opt, "recommended": opt["value"] == inferred} for opt in DIRECTION_OPTIONS]
+
+    if inferred:
+        label = _LABEL_BY_VALUE.get(inferred, inferred)
+        question = f"我听下来，你此刻可能更想要「{label.strip()}」"
+        if reason:
+            question += f"——{reason}"
+        question += "。是这样吗？也可以换成此刻更舒服的那个："
+    else:
+        question = STEER_QUESTION
+
+    return {
+        "type": "choose_support_mode",
+        "question": question,
+        "options": options,
+        "inferred_mode": inferred or None,
+        "inferred_reason": reason or None,
+    }
 
 
 def steer_direction_node(state: AgentState):
     """
     【节点：疗愈方向引导（Human-in-the-Loop 断点）】
-    在生成疗愈回复前，调用 interrupt() 让图「原地暂停」，把“你想我怎样陪你”的
-    一键选项递送给前端；用户点选后经 Command(resume=) 恢复，所选方向写入 state
-    供 generate_response 定调。人工输入成本极低（点一下），却能为长回复精准定调。
+    Step 8 起仅在 CF 低置信时到达（高置信已由 Supervisor 直通、不打扰用户）。
+    调用 interrupt() 原地暂停，把「CF 推断方向 + 理由 + 三个可覆盖选项」递送给前端；
+    用户采纳或改选后，经 Command(resume=) 恢复，所选方向写入 state 供回复定调。
     """
-    choice = interrupt(
-        {
-            "type": "choose_support_mode",
-            "question": STEER_QUESTION,
-            "options": DIRECTION_OPTIONS,
-        }
-    )
+    choice = interrupt(_build_steer_payload(state))
 
     # 兼容前端直接回传字符串或 {value:...} 两种形态
     if isinstance(choice, dict):
@@ -53,7 +71,8 @@ def steer_direction_node(state: AgentState):
     support_mode = choice if choice in _VALID_MODES else "listen"
 
     logger.info(
-        "用户选择陪伴方向 user_id={} support_mode={}",
-        state.get("user_id", "default_user"), support_mode,
+        "用户点选陪伴方向 user_id={} conversation_id={} support_mode={} (CF 推断={} 置信={:.2f})",
+        state.get("user_id", "default_user"), state.get("conversation_id", ""), support_mode,
+        state.get("support_mode", "") or "-", state.get("support_mode_confidence", 0.0) or 0.0,
     )
     return {"support_mode": support_mode}

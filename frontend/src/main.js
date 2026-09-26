@@ -228,10 +228,21 @@ function renderSteerOptions(options) {
   const box = document.createElement('div');
   box.className = 'steer-options';
   options.forEach((opt) => {
+    // CF 推断命中的选项带 recommended=true：高亮 + “AI 推荐”徽标，让用户对着问句一眼找到对应项、可一键采纳
+    const recommended = opt.recommended === true;
     const btn = document.createElement('button');
-    btn.className = 'steer-chip';
+    btn.className = recommended ? 'steer-chip recommended' : 'steer-chip';
     btn.textContent = opt.label;
-    if (opt.hint) btn.title = opt.hint;
+    if (recommended) {
+      const tag = document.createElement('span');
+      tag.className = 'steer-tag';
+      tag.textContent = 'AI 推荐';
+      btn.appendChild(tag);
+    }
+    const tips = [];
+    if (opt.hint) tips.push(opt.hint);
+    if (recommended) tips.push('这是我听下来最贴合的方向，可直接采纳');
+    if (tips.length) btn.title = tips.join(' · ');
     btn.addEventListener('click', () => submitDirection(opt.value, opt.label, steerEl));
     box.appendChild(btn);
   });

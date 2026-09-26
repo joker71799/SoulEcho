@@ -36,8 +36,8 @@ def finalize_reply_node(state: AgentState):
         level = state.get("crisis_level", "risk")
         reply = CRISIS_TEMPLATE.get(level) or CRISIS_TEMPLATE["risk"]
         logger.warning(
-            "命中危机干预分支，返回安全模板 user_id={} level={}",
-            state.get("user_id", "default_user"), level,
+            "命中危机干预分支，返回安全模板 user_id={} conversation_id={} level={}",
+            state.get("user_id", "default_user"), state.get("conversation_id", ""), level,
         )
         # 危机话术是新造的模板、不在 messages 里，需追加为 AI 消息以保持多轮历史一致
         _persist_turn_memory(state, user_input, reply)
@@ -48,7 +48,7 @@ def finalize_reply_node(state: AgentState):
             "messages": [AIMessage(content=reply)],
         }
 
-    # 正常分支：ReAct 已生成回复，反向取最后一条“有正文且非工具调用”的 AIMessage；
+    # 正常分支：生成节点（专家/闲聊）已产出回复，反向取最后一条“有正文且非工具调用”的 AIMessage；
     reply = next(
         (
             m.content for m in reversed(state["messages"])
@@ -56,11 +56,11 @@ def finalize_reply_node(state: AgentState):
         ),
         "",
     )
-    # reply 已由 react_agent 追加进 messages，本分支不再重复追加；只做记忆写入
+    # reply 已由生成节点追加进 messages，本分支不再重复追加；只做记忆写入
     _persist_turn_memory(state, user_input, reply)
     logger.info(
-        "ReAct 疗愈收尾完成 user_id={} reply_preview={!r}",
-        state.get("user_id", "default_user"), preview(reply),
+        "疗愈收尾完成 user_id={} conversation_id={} reply_preview={!r}",
+        state.get("user_id", "default_user"), state.get("conversation_id", ""), preview(reply),
     )
     return {"reply": reply}
 
@@ -73,6 +73,7 @@ def _persist_turn_memory(state: AgentState, user_input: str, reply: str):
     Mem0 服务端自行维护历史，提取事实时会拼接其记录的近期消息，无需客户端侧重复传入。
     """
     user_id = state.get("user_id", "default_user")
+    conversation_id = state.get("conversation_id", "")
     mem0_payload = [
         {"role": "user", "content": user_input},
         {"role": "assistant", "content": reply},
@@ -82,9 +83,12 @@ def _persist_turn_memory(state: AgentState, user_input: str, reply: str):
         mem0_client.add(mem0_payload, user_id=user_id)
     except Exception:
         # 写入失败单独留一条带上下文的 error（含完整堆栈），再向上抛交给接口层统一转 500
-        logger.exception("Mem0 记忆写入失败 user_id={} query={!r}", user_id, user_input)
+        logger.exception(
+            "Mem0 记忆写入失败 user_id={} conversation_id={} query={!r}",
+            user_id, conversation_id, user_input,
+        )
         raise
     logger.info(
-        "Mem0 尝试写入记忆完成 user_id={} query={!r} reply_preview={!r} elapsed={:.0f}ms",
-        user_id, user_input, preview(reply), (time.perf_counter() - started) * 1000,
+        "Mem0 尝试写入记忆完成 user_id={} conversation_id={} query={!r} reply_preview={!r} elapsed={:.0f}ms",
+        user_id, conversation_id, user_input, preview(reply), (time.perf_counter() - started) * 1000,
     )

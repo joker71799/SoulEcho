@@ -1,7 +1,7 @@
 [project]
 name = "soulecho"
 version = "0.1.0"
-description = "个人日志疗愈Agent"
+description = "个人心理疗愈Agent"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -16,3 +16,13 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "uvicorn>=0.53.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+]
+
+[tool.pytest.ini_options]
+# 后端以 backend/app 为导入根（main.py 里 from agent/config 平铺导入），测试同构
+pythonpath = ["backend/app"]
+testpaths = ["backend/app/tests"]

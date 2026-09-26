@@ -8,8 +8,10 @@
 import time
 from typing import Annotated
 
-from langchain_core.tools import tool
+from langchain_core.messages import ToolMessage
+from langchain_core.tools import tool, InjectedToolCallId
 from langgraph.prebuilt import InjectedState
+from langgraph.types import Command
 
 from config.mem0_config import mem0_client, MEM0_SEARCH_MIN_SCORE
 from config.logging_config import logger, preview
@@ -25,7 +27,11 @@ NO_MEMORY_FOUND = (
 
 
 @tool
-def search_memory(query: str, state: Annotated[dict, InjectedState]) -> str:
+def search_memory(
+    query: str,
+    state: Annotated[dict, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command:
     """检索该用户跨会话的长期记忆（历史经历、情感画像）。
 
     用户直接问你“记不记得”某事、或询问自己的偏好/经历时，必须调用本工具核实，
@@ -36,6 +42,7 @@ def search_memory(query: str, state: Annotated[dict, InjectedState]) -> str:
     若返回“没有找到相关历史记忆”，则该用户真的没提过，不得自行编造。
     """
     user_id = state["user_id"]
+    conversation_id = state.get("conversation_id", "")
     started = time.perf_counter()
     previous_memories = mem0_client.search(query, user_id=user_id)
 
@@ -62,14 +69,22 @@ def search_memory(query: str, state: Annotated[dict, InjectedState]) -> str:
         else "无"
     )
     logger.info(
-        "ReAct 记忆检索完成 user_id={} hit={}/{} max_score={:.3f} min_score={} "
+        "ReAct 记忆检索完成 user_id={} conversation_id={} hit={}/{} max_score={:.3f} min_score={} "
         "elapsed={:.0f}ms query={!r} memories={}",
-        user_id, len(relevant), len(pairs), max_score, MEM0_SEARCH_MIN_SCORE,
+        user_id, conversation_id, len(relevant), len(pairs), max_score, MEM0_SEARCH_MIN_SCORE,
         (time.perf_counter() - started) * 1000, preview(query), hit_detail,
     )
     # 供模型“观察”的工具返回值；无命中给明确信号，避免模型编造历史
-    return memory_context or NO_MEMORY_FOUND
+    observation = memory_context or NO_MEMORY_FOUND
+
+    # Step 2：命中时把过阈值的记忆条目写回 state.retrieved_memories（纯生产端，本轮无消费方）；
+    # 无命中不写，保持 crisis_router 每轮重置后的 []。工具需同时回观察、又写状态，
+    # 故返回 Command：观察包在 ToolMessage 里回给 ReAct，记忆条目随 update 合并进图状态。
+    update: dict = {"messages": [ToolMessage(observation, tool_call_id=tool_call_id)]}
+    if relevant:
+        update["retrieved_memories"] = [text for _, text in relevant]
+    return Command(update=update)
 
 
-# 供 react_agent 节点 bind_tools、ToolNode 注册的唯一数据源
+# 供 CF / 闲聊节点 bind_tools、ToolNode 注册的唯一数据源
 HEALING_TOOLS = [search_memory]

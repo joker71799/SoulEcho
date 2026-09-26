@@ -13,7 +13,7 @@ from agent import soulecho_agent
 # 初始化 FastAPI 实例
 app = FastAPI(
     title="SoulEcho API",
-    description="个人日志疗愈 Agent MVP 后端接口服务",
+    description="个人心理疗愈 Agent MVP 后端接口服务",
     version="0.1.0"
 )
 
@@ -22,10 +22,10 @@ app = FastAPI(
 # 定义请求与响应的数据模型 (Pydantic)
 # ==========================================
 
-class JournalInput(BaseModel):
+class ChatInput(BaseModel):
     user_id: str          # 用于 Mem0 长期记忆隔离（跨会话）
     conversation_id: str  # 用于 Checkpointer 单次会话内多轮对话上下文隔离（thread_id）
-    content: str  # 用户倾诉的日志内容
+    content: str  # 用户倾诉的内容
 
 
 class DirectionInput(BaseModel):
@@ -35,7 +35,7 @@ class DirectionInput(BaseModel):
     support_mode: str     # listen / clarify / advise
 
 
-class JournalResponse(BaseModel):
+class ChatResponse(BaseModel):
     """统一响应：done 直接给回复；direction_required 给待点选的引导选项"""
     status: str                          # "done" | "direction_required"
     reply: Optional[str] = None          # status=done 时有值
@@ -51,7 +51,7 @@ def _thread_config(conversation_id: str):
     return {"configurable": {"thread_id": conversation_id}}
 
 
-def _to_response(result: dict, user_id: str, conversation_id: str) -> JournalResponse:
+def _to_response(result: dict, user_id: str, conversation_id: str) -> ChatResponse:
     # 图在 steer_direction 处 interrupt -> 返回体带 __interrupt__，转成“待点选方向”响应
     if "__interrupt__" in result and result["__interrupt__"]:
         steer_payload = result["__interrupt__"][0].value
@@ -59,7 +59,7 @@ def _to_response(result: dict, user_id: str, conversation_id: str) -> JournalRes
             "图已暂停等待方向引导 user_id={} conversation_id={} question={!r}",
             user_id, conversation_id, preview(steer_payload.get("question", "")),
         )
-        return JournalResponse(status="direction_required", steer=steer_payload)
+        return ChatResponse(status="direction_required", steer=steer_payload)
 
     # 正常跑完（或用户点选恢复后）：记录 State 快照，返回最终疗愈回复
     # 截断原则：AI/记忆等长正文做预览，用户消息（query）保留全文
@@ -76,20 +76,33 @@ def _to_response(result: dict, user_id: str, conversation_id: str) -> JournalRes
         if card
         else "-"
     )
+    # retrieved_memories 是记忆长文本，逐条 preview 截断，只留可审计的命中概览
+    memories = result.get("retrieved_memories") or []
+    memory_summaries = " | ".join(preview(str(m)) for m in memories) or "-"
     logger.info(
         "State 快照 user_id={} conversation_id={} is_crisis={} crisis_level={} "
-        "crisis_card=[{}] support_mode={} msg_count={} messages=[{}]",
+        "crisis_card=[{}] is_chitchat={} support_mode={} confidence={} "
+        "support_mode_reason={} case_formulation={} rewrite_count={} review_feedback={} "
+        "retrieved_memories({})=[{}] msg_count={} messages=[{}]",
         user_id, conversation_id, result.get("is_crisis", ""),
         result.get("crisis_level", ""), card_summary,
+        result.get("is_chitchat", ""),
         result.get("support_mode", ""),
+        result.get("support_mode_confidence", 0.0),
+        preview(result.get("support_mode_reason", "")),
+        preview(result.get("case_formulation", "")),
+        result.get("rewrite_count", 0),
+        preview(result.get("review_feedback", "")),
+        len(memories),
+        memory_summaries,
         len(result.get("messages", [])),
         " | ".join(snapshot_msgs),
     )
-    return JournalResponse(status="done", reply=result["reply"], crisis=result.get("crisis_card"))
+    return ChatResponse(status="done", reply=result["reply"], crisis=result.get("crisis_card"))
 
 
-@app.post("/api/v1/chat", response_model=JournalResponse)
-async def chat_with_agent(payload: JournalInput):
+@app.post("/api/v1/chat", response_model=ChatResponse)
+async def chat_with_agent(payload: ChatInput):
     """
     核心对话接口。若会话尚未确定陪伴方向，图会在生成前暂停并返回 direction_required，
     等待前端调用 /api/v1/resume 提交点选后恢复生成。
@@ -104,7 +117,9 @@ async def chat_with_agent(payload: JournalInput):
         # 1. 组装输入数据，格式必须符合我们在 graph.py 中定义的 AgentState 结构
         inputs = {
             "messages": [payload.content],  # 放入列表作为消息队列的最新一条
-            "user_id": payload.user_id  # 用户 ID
+            "user_id": payload.user_id,  # 用户 ID
+            # 会话 ID 随 user_id 一起落进状态，供各节点日志按会话追踪链路
+            "conversation_id": payload.conversation_id,
         }
 
         # 2. 触发并运行 LangGraph 状态图工作流（可能在中途因 interrupt 暂停）
@@ -128,7 +143,7 @@ async def chat_with_agent(payload: JournalInput):
         raise HTTPException(status_code=500, detail=f"Agent 运行异常: {str(e)}")
 
 
-@app.post("/api/v1/resume", response_model=JournalResponse)
+@app.post("/api/v1/resume", response_model=ChatResponse)
 async def resume_with_direction(payload: DirectionInput):
     """用户在引导门点选方向后，用同一 thread_id 恢复图执行并生成疗愈回复。"""
     try:
