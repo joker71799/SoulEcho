@@ -170,15 +170,23 @@ def _build_jev_text(messages: list, current: str) -> str:
     纯字符串拼接，零额外 LLM 调用、零延迟。
     """
     past_human = [i for i, m in enumerate(messages[:-1]) if isinstance(m, HumanMessage)]
-    history = (
-        messages[past_human[max(0, len(past_human) - _JEV_HISTORY_TURNS)] : -1]
-        if past_human else []
-    )
+    # 1. 如果历史上根本没有用户消息，直接给空列表
+    if not past_human:
+        history = []
+    else:
+        # 2. 计算我们要从 past_human 列表里的第几个位置开始取
+        target_index = len(past_human) - _JEV_HISTORY_TURNS
+        # 3. 如果历史不够 N 轮，就从第 0 个位置开始取（防负数）
+        safe_index = max(0, target_index)
+        # 4. 找到倒数第 N 条用户消息在 messages 里的真实索引
+        start_in_messages = past_human[safe_index]
+        # 5. 从那个真实索引切片到当前 query 之前（-1）
+        history = messages[start_in_messages: -1]
     lines = [
         f"[{'user' if isinstance(m, HumanMessage) else 'assistant'}] {m.content}"
         for m in history
-        if isinstance(m, (HumanMessage, AIMessage))
-        and not getattr(m, "tool_calls", None)
+        if isinstance(m, (HumanMessage, AIMessage)) # 过滤掉工具消息
+        and not getattr(m, "tool_calls", None) # 过滤掉带tool_calls的AI消息
     ]
     block = (
         "【历史聊天记录】（仅作上下文参考，用于补全当前句的指代与省略，不要对其判定）\n"
